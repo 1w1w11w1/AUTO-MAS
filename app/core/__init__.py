@@ -26,6 +26,7 @@ from .config import Config, MaaConfig, GeneralConfig, MaaUserConfig, GeneralUser
 from .emulator_manager import EmulatorManager
 from .task_manager import TaskManager
 from .maa_manager import MaaFWManager
+from .plugins import PluginManager
 
 from .timer import MainTimer
 
@@ -40,4 +41,5 @@ __all__ = [
     "TaskManager",
     "EmulatorManager",
     "MaaFWManager",
+    "PluginManager",
 ]
