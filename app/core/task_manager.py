@@ -25,6 +25,8 @@ import asyncio
 from typing import Dict, Literal
 
 from .config import Config, MaaConfig, SrcConfig, GeneralConfig
+from .config import Config, MaaConfig, GeneralConfig
+from .plugins import PluginEventFactory
 from app.services import System
 from app.models.task import TaskItem, ScriptItem, UserItem, TaskExecuteBase
 from app.utils import get_logger
@@ -89,14 +91,6 @@ class Task(TaskExecuteBase):
             f"任务 {self.task_info.task_id} 检索完成，包含 {len(self.task_info.script_list)} 个脚本项"
         )
 
-    def _emit_plugin_event(self, event: str, payload: dict) -> None:
-        try:
-            from app.core import PluginManager
-
-            PluginManager.emit(event, payload)
-        except Exception as e:
-            logger.warning(f"插件事件广播失败: event={event}, error={e}")
-
     async def main_task(self):
 
         await self.prepare()
@@ -138,14 +132,14 @@ class Task(TaskExecuteBase):
             # 标记为运行中
             script_item.status = "运行"
             logger.info(f"任务开始: {current_script_uid}")
-            self._emit_plugin_event(
-                "script.start",
-                {
-                    "task_id": self.task_info.task_id,
-                    "script_id": str(current_script_uid),
-                    "script_name": script_item.name,
-                    "mode": self.task_info.mode,
-                },
+            PluginEventFactory.emit_script_event(
+                event="script.start",
+                source="core.task_manager",
+                task_id=self.task_info.task_id,
+                script_id=str(current_script_uid),
+                script_name=script_item.name,
+                mode=self.task_info.mode,
+                status=script_item.status,
             )
 
             if isinstance(Config.ScriptConfig[current_script_uid], MaaConfig):
@@ -169,28 +163,53 @@ class Task(TaskExecuteBase):
             try:
                 await self.spawn(task_item)
             except asyncio.CancelledError:
-                self._emit_plugin_event(
-                    "script.cancelled",
-                    {
-                        "task_id": self.task_info.task_id,
-                        "script_id": str(current_script_uid),
-                        "script_name": script_item.name,
-                        "mode": self.task_info.mode,
-                        "status": script_item.status,
-                    },
+                error_text = "CancelledError: 任务执行被取消"
+                PluginEventFactory.emit_script_event(
+                    event="script.cancelled",
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=error_text,
+                    result="script.cancelled",
+                )
+                PluginEventFactory.emit_script_event(
+                    event="script.exit",
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=error_text,
+                    result="script.cancelled",
                 )
                 raise
             except Exception as e:
-                self._emit_plugin_event(
-                    "script.error",
-                    {
-                        "task_id": self.task_info.task_id,
-                        "script_id": str(current_script_uid),
-                        "script_name": script_item.name,
-                        "mode": self.task_info.mode,
-                        "status": script_item.status,
-                        "error": f"{type(e).__name__}: {e}",
-                    },
+                error_text = f"{type(e).__name__}: {e}"
+                PluginEventFactory.emit_script_event(
+                    event="script.error",
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=error_text,
+                    result="script.error",
+                )
+                PluginEventFactory.emit_script_event(
+                    event="script.exit",
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=error_text,
+                    result="script.error",
                 )
                 raise
             else:
@@ -199,15 +218,31 @@ class Task(TaskExecuteBase):
                     if script_item.status == "完成"
                     else "script.error"
                 )
-                self._emit_plugin_event(
-                    result_event,
-                    {
-                        "task_id": self.task_info.task_id,
-                        "script_id": str(current_script_uid),
-                        "script_name": script_item.name,
-                        "mode": self.task_info.mode,
-                        "status": script_item.status,
-                    },
+                result_error = None
+                if result_event == "script.error":
+                    result_error = "脚本状态非完成"
+
+                PluginEventFactory.emit_script_event(
+                    event=result_event,
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=result_error,
+                    result=result_event,
+                )
+                PluginEventFactory.emit_script_event(
+                    event="script.exit",
+                    source="core.task_manager",
+                    task_id=self.task_info.task_id,
+                    script_id=str(current_script_uid),
+                    script_name=script_item.name,
+                    mode=self.task_info.mode,
+                    status=script_item.status,
+                    error=result_error,
+                    result=result_event,
                 )
 
     async def final_task(self) -> None:
