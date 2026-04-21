@@ -26,8 +26,10 @@
         <div class="task-list">
           <draggable
             v-model="localTaskQueue"
-            item-key="name"
+            :item-key="getTaskItemKey"
             :animation="200"
+            handle=".drag-handle"
+            :move="onDragMove"
             ghost-class="ghost"
             chosen-class="chosen"
             drag-class="drag"
@@ -37,29 +39,24 @@
             <template #item="{ element: item, index }">
               <div
                 class="draggable-task-item"
-                :class="{ 'selected-item': selectedTaskIndex === index }"
+                :class="{
+                  'fixed-tail-task': isFixedTailTask(item),
+                  'selected-item': selectedTaskIndex === index,
+                }"
                 @click="selectTask(index)"
               >
                 <div class="task-item-content">
+                  <span
+                    v-if="!isFixedTailTask(item)"
+                    class="drag-handle"
+                    title="拖拽排序"
+                  >
+                    <HolderOutlined />
+                  </span>
                   <span class="task-name">{{ item.name }}</span>
                   <div class="task-actions">
                     <a-button
-                      type="text"
-                      size="small"
-                      :disabled="index === 0"
-                      @click.stop="moveTaskUp(index)"
-                    >
-                      <UpOutlined />
-                    </a-button>
-                    <a-button
-                      type="text"
-                      size="small"
-                      :disabled="index === localTaskQueue.length - 1"
-                      @click.stop="moveTaskDown(index)"
-                    >
-                      <DownOutlined />
-                    </a-button>
-                    <a-button
+                      v-if="!isFixedTailTask(item)"
                       type="text"
                       size="small"
                       danger
@@ -92,6 +89,7 @@
           />
           
           <a-button
+            v-if="!isFixedTailTask(taskQueue[selectedTaskIndex])"
             type="primary"
             danger
             block
@@ -112,8 +110,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { PlusOutlined, UpOutlined, DownOutlined, DeleteOutlined } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { PlusOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
 import draggable from 'vuedraggable'
 import { Service } from '@/api'
 import type { M9ATaskQueueItem, M9ATaskOption } from '@/types/script'
@@ -136,6 +134,21 @@ const availableTasks = ref<any[]>([])
 const selectedTaskIndex = ref<number | null>(null)
 const taskDefinitions = ref<Record<string, any>>({})
 const localTaskQueue = ref<M9ATaskQueueItem[]>([])
+
+const getTaskItemKey = (item: M9ATaskQueueItem, index: number) => `${item.name}__${index}`
+
+const FIXED_TAIL_TASK_NAME = '关闭游戏'
+
+const isFixedTailTask = (item?: M9ATaskQueueItem | null) => item?.name === FIXED_TAIL_TASK_NAME
+
+const ensureFixedTailTask = (queue: M9ATaskQueueItem[]): M9ATaskQueueItem[] => {
+  const filtered = (queue || []).filter(item => item && item.name !== FIXED_TAIL_TASK_NAME)
+  return [...filtered, { name: FIXED_TAIL_TASK_NAME, options: [] }]
+}
+
+const indexOfFixedTailTask = (queue: M9ATaskQueueItem[]): number => {
+  return queue.findIndex(item => item?.name === FIXED_TAIL_TASK_NAME)
+}
 
 const buildDefaultOptions = (taskDef: any): M9ATaskOption[] => {
   const options: M9ATaskOption[] = []
@@ -196,25 +209,56 @@ const loadAvailableTasks = async () => {
       })
       
       logger.info(`availableTasks set to: ${JSON.stringify(availableTasks.value)}`)
+      if (availableTasks.value.length === 0) {
+        Modal.warning({
+          title: '未检测到可用 M9A 任务',
+          content: '请先在脚本编辑设置中选择正确的 M9A 脚本文件夹，然后返回此页面重试。',
+          okText: '我知道了',
+        })
+      }
+    } else {
+      const backendMessage = response?.message || '未知错误'
+      logger.warning(`加载可用任务失败: ${backendMessage}`)
+      Modal.warning({
+        title: '加载 M9A 任务失败',
+        content: `请先在脚本编辑设置中选择正确的 M9A 脚本文件夹。后端提示：${backendMessage}`,
+        okText: '我知道了',
+      })
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error)
     logger.error(`加载可用任务失败: ${errorMsg}`)
-    message.error('加载可用任务失败')
+    Modal.warning({
+      title: '加载 M9A 任务失败',
+      content: '请先在脚本编辑设置中选择正确的 M9A 脚本文件夹，然后重试。',
+      okText: '我知道了',
+    })
   }
 }
 
 const handleAddTask = ({ key }: { key: string }) => {
   logger.info(`handleAddTask called, key: ${key}`)
+  if (key === FIXED_TAIL_TASK_NAME) {
+    addTaskDropdownVisible.value = false
+    message.info('“关闭游戏”会自动保持在队尾，无需手动添加')
+    return
+  }
   const taskDef = taskDefinitions.value[key]
   if (taskDef) {
     const newTask: M9ATaskQueueItem = {
       name: key,
       options: buildDefaultOptions(taskDef)
     }
-    const newQueue = [...localTaskQueue.value, newTask]
+    const fixedIndex = indexOfFixedTailTask(localTaskQueue.value)
+    const insertIndex = fixedIndex >= 0 ? fixedIndex : localTaskQueue.value.length
+    const baseQueue = fixedIndex >= 0 ? [...localTaskQueue.value] : ensureFixedTailTask([...localTaskQueue.value])
+    baseQueue.splice(insertIndex, 0, newTask)
+    const newQueue = ensureFixedTailTask(baseQueue)
     emit('update:taskQueue', newQueue)
-    selectedTaskIndex.value = newQueue.length - 1
+    selectedTaskIndex.value = Math.min(insertIndex, newQueue.length - 2)
+    if (localTaskQueue.value.some(task => task.name === key)) {
+      message.success(`已再次添加任务：${key}`)
+    }
   }
   addTaskDropdownVisible.value = false
 }
@@ -223,35 +267,14 @@ const selectTask = (index: number) => {
   selectedTaskIndex.value = index
 }
 
-const moveTaskUp = (index: number) => {
-  if (index > 0) {
-    const newQueue = [...localTaskQueue.value]
-    ;[newQueue[index - 1], newQueue[index]] = [newQueue[index], newQueue[index - 1]]
-    emit('update:taskQueue', newQueue)
-    if (selectedTaskIndex.value === index) {
-      selectedTaskIndex.value = index - 1
-    } else if (selectedTaskIndex.value === index - 1) {
-      selectedTaskIndex.value = index
-    }
-  }
-}
-
-const moveTaskDown = (index: number) => {
-  if (index < localTaskQueue.value.length - 1) {
-    const newQueue = [...localTaskQueue.value]
-    ;[newQueue[index], newQueue[index + 1]] = [newQueue[index + 1], newQueue[index]]
-    emit('update:taskQueue', newQueue)
-    if (selectedTaskIndex.value === index) {
-      selectedTaskIndex.value = index + 1
-    } else if (selectedTaskIndex.value === index + 1) {
-      selectedTaskIndex.value = index
-    }
-  }
-}
-
 const deleteTask = (index: number) => {
+  const target = localTaskQueue.value[index]
+  if (isFixedTailTask(target)) {
+    message.info('“关闭游戏”是固定队尾任务，无法删除')
+    return
+  }
   const newQueue = localTaskQueue.value.filter((_, i) => i !== index)
-  emit('update:taskQueue', newQueue)
+  emit('update:taskQueue', ensureFixedTailTask(newQueue))
   if (selectedTaskIndex.value === index) {
     selectedTaskIndex.value = newQueue.length > 0 ? Math.min(index, newQueue.length - 1) : null
   } else if (selectedTaskIndex.value !== null && selectedTaskIndex.value > index) {
@@ -273,23 +296,47 @@ const getOptionDefinitions = (index: number) => {
 
 const handleOptionUpdate = (newOptions: M9ATaskOption[]) => {
   if (selectedTaskIndex.value !== null) {
+    if (isFixedTailTask(localTaskQueue.value[selectedTaskIndex.value])) {
+      return
+    }
     const newQueue = [...localTaskQueue.value]
     newQueue[selectedTaskIndex.value] = {
       ...newQueue[selectedTaskIndex.value],
       options: newOptions
     }
-    emit('update:taskQueue', newQueue)
+    emit('update:taskQueue', ensureFixedTailTask(newQueue))
   }
 }
 
 const onDragEnd = () => {
-  emit('update:taskQueue', localTaskQueue.value)
+  emit('update:taskQueue', ensureFixedTailTask(localTaskQueue.value))
+}
+
+const onDragMove = (evt: any) => {
+  const dragged: M9ATaskQueueItem | undefined = evt?.draggedContext?.element
+  if (isFixedTailTask(dragged)) return false
+
+  const fixedIndex = indexOfFixedTailTask(localTaskQueue.value)
+  if (fixedIndex < 0) return true
+
+  const futureIndex = evt?.draggedContext?.futureIndex
+  if (typeof futureIndex !== 'number') return true
+
+  // 禁止把任何任务移动到“关闭游戏”之后；也禁止把任务插到 fixedIndex 位置之后
+  return futureIndex < fixedIndex
 }
 
 watch(
   () => props.taskQueue,
   (newQueue) => {
-    localTaskQueue.value = [...newQueue]
+    const ensured = ensureFixedTailTask([...(newQueue || [])])
+    localTaskQueue.value = ensured
+
+    // 如果上游没带固定队尾任务，主动回写一次，保证保存后也稳定
+    const incomingHasFixed = Array.isArray(newQueue) && newQueue.some(item => item?.name === FIXED_TAIL_TASK_NAME)
+    if (!incomingHasFixed) {
+      emit('update:taskQueue', ensured)
+    }
   },
   { immediate: true, deep: true }
 )
@@ -380,9 +427,21 @@ onMounted(() => {
 
 .task-item-content {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   width: 100%;
+}
+
+.drag-handle {
+  color: var(--ant-color-text-secondary);
+  cursor: grab;
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .task-name {
@@ -395,6 +454,22 @@ onMounted(() => {
 }
 
 .selected-item {
+  background-color: var(--ant-color-primary-bg);
+}
+
+.fixed-tail-task {
+  background: linear-gradient(
+    90deg,
+    var(--ant-color-primary-bg),
+    transparent 60%
+  );
+}
+
+.fixed-tail-task .task-name {
+  font-weight: 600;
+}
+
+.fixed-tail-task:hover {
   background-color: var(--ant-color-primary-bg);
 }
 

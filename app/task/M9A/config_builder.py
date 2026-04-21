@@ -162,26 +162,24 @@ class M9AConfigBuilder:
 
         # 4. 对 TaskItems 排序：启动游戏(StartUp)必须在第一个，关闭游戏(Close1999)必须在最后一个
         # 注意：TaskItems 现在只包含队列中的任务（去重后）
-        startup_item = None
-        close_item = None
+        startup_items = []
+        close_items = []
         normal_items = []
         
         # 先分离特殊任务和普通任务
         for item in config["TaskItems"]:
             if item.get("entry") == "StartUp":
-                startup_item = item
+                startup_items.append(item)
             elif item.get("entry") == "Close1999":
-                close_item = item
+                close_items.append(item)
             else:
                 normal_items.append(item)
         
         # 按正确顺序组装：启动游戏 → 普通任务 → 关闭游戏
         ordered_task_items = []
-        if startup_item:
-            ordered_task_items.append(startup_item)
+        ordered_task_items.extend(startup_items)
         ordered_task_items.extend(normal_items)
-        if close_item:
-            ordered_task_items.append(close_item)
+        ordered_task_items.extend(close_items)
         
         config["TaskItems"] = ordered_task_items
         logger.info("M9A TaskItems 已排序：启动游戏首位，关闭游戏末位")
@@ -297,6 +295,8 @@ class M9AConfigBuilder:
         options = []
         for user_opt in user_options:
             opt_name = user_opt.get("name")
+            if not opt_name:
+                continue
             opt_index = user_opt.get("index", 0)
             opt_item = {"name": opt_name, "index": opt_index}
             

@@ -82,6 +82,33 @@ class M9AManager(TaskExecuteBase):
             / "M9A.exe"
         ).exists():
             return "M9A.exe文件不存在, 请检查M9A路径设置！"
+
+        m9a_root = Path(
+            Config.ScriptConfig[uuid.UUID(self.script_info.script_id)].get("Info", "Path")
+        )
+        m9a_config_dir = m9a_root / "config"
+        m9a_instances_dir = m9a_config_dir / "instances"
+
+        # MuX / MFaa 构建差异：MuX 版本在用户侧常见，但目录结构与本适配约定不一致
+        # 这里做前置识别与提示，避免“运行时才炸”。
+        root_hint = str(m9a_root).lower()
+        looks_like_mux = "mux" in root_hint or any(
+            ("mux" in p.name.lower()) for p in m9a_root.glob("*") if p.exists()
+        )
+
+        if not m9a_config_dir.exists():
+            return "M9A/config 目录不存在，请检查 M9A 路径是否指向完整的 M9A 程序目录。"
+
+        if not m9a_instances_dir.exists():
+            if looks_like_mux:
+                return (
+                    "检测到当前 M9A 可能为「MuX 框架」构建（目录/配置结构与 AUTO-MAS 的 M9A 适配不兼容）。\n"
+                    "请在脚本编辑设置中将 M9A 路径切换为「MFaa」构建版本的 M9A 根目录（应包含 M9A.exe 与 config/instances/）。"
+                )
+            return (
+                "M9A/config/instances 目录不存在，无法写入运行配置（default.json）。\n"
+                "请确认 M9A 路径正确，或使用 MFaa 构建版本的 M9A。"
+            )
         if not (
             any(
                 (
@@ -180,23 +207,31 @@ class M9AManager(TaskExecuteBase):
 
     async def final_task(self):
         """运行结束后的收尾工作"""
-
-        if self.check_result != "Pass":
-            self.script_info.status = "异常"
-            return self.check_result
-
+        # 取消/异常时也必须尽量做清理，否则会出现“停止任务但模拟器/M9A 未退出”
         logger.info("M9A 主任务已结束, 开始执行后续操作")
-        await Config.ScriptConfig[uuid.UUID(self.script_info.script_id)].unlock()
-        logger.success(f"已解锁脚本配置 {self.script_info.script_id}")
 
-        if self.task_info.mode in ["AutoProxy"]:
+        # 解锁脚本配置（若已锁定）
+        try:
+            script_uid = uuid.UUID(self.script_info.script_id)
+            if script_uid in Config.ScriptConfig and Config.ScriptConfig[script_uid].is_locked:
+                await Config.ScriptConfig[script_uid].unlock()
+                logger.success(f"已解锁脚本配置 {self.script_info.script_id}")
+        except Exception as e:
+            logger.warning(f"解锁脚本配置失败: {e}")
 
-            await self.emulator_manager.close(
-                self.script_config.get("Emulator", "Index")
-            )
-            await Config.ScriptConfig[
-                uuid.UUID(self.script_info.script_id)
-            ].UserData.load(await self.user_config.toDict())
+        # 尝试关闭模拟器（AutoProxy 模式下通常会打开）
+        try:
+            if hasattr(self, "emulator_manager") and self.emulator_manager is not None:
+                await self.emulator_manager.close(self.script_config.get("Emulator", "Index"))
+        except Exception as e:
+            logger.warning(f"关闭模拟器失败: {e}")
+
+        # 落盘用户配置（如果已加载）
+        try:
+            if hasattr(self, "user_config") and self.user_config is not None:
+                await Config.ScriptConfig[script_uid].UserData.load(await self.user_config.toDict())
+        except Exception as e:
+            logger.warning(f"保存用户配置失败: {e}")
 
             error_user = [
                 u.name for u in self.script_info.user_list if u.status == "异常"
@@ -236,12 +271,18 @@ class M9AManager(TaskExecuteBase):
                 )
 
         # 还原配置
-        if (self.temp_path).exists():
-            shutil.rmtree(self.m9a_config_path, ignore_errors=True)
-            shutil.copytree(self.temp_path, self.m9a_config_path, dirs_exist_ok=True)
-        shutil.rmtree(self.temp_path, ignore_errors=True)
+        try:
+            if hasattr(self, "temp_path") and (self.temp_path).exists():
+                shutil.rmtree(self.m9a_config_path, ignore_errors=True)
+                shutil.copytree(self.temp_path, self.m9a_config_path, dirs_exist_ok=True)
+            if hasattr(self, "temp_path"):
+                shutil.rmtree(self.temp_path, ignore_errors=True)
+        except Exception as e:
+            logger.warning(f"还原 M9A 配置失败: {e}")
 
-        self.script_info.status = "完成"
+        # 如果是被停止/异常，状态会在 on_crash 或子任务里置为异常；否则标记完成
+        if self.script_info.status not in ("异常",):
+            self.script_info.status = "完成"
 
     async def on_crash(self, e: Exception):
 

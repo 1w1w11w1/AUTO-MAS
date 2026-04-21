@@ -51,6 +51,13 @@ const isEdit = ref(!!userId)
 
 const scriptName = ref('')
 const taskQueue = ref<M9ATaskQueueItem[]>([])
+const m9aUserTemplate = ref<any | null>(null)
+
+const FIXED_TAIL_TASK_NAME = '关闭游戏'
+const ensureFixedTailTask = (queue: M9ATaskQueueItem[]): M9ATaskQueueItem[] => {
+  const filtered = (queue || []).filter(item => item && item.name !== FIXED_TAIL_TASK_NAME)
+  return [...filtered, { name: FIXED_TAIL_TASK_NAME, options: [] }]
+}
 
 
 
@@ -183,10 +190,52 @@ const loadScriptInfo = async () => {
 
 const createUserImmediately = async () => {
   try {
+    const existingUsers = await getUsers(scriptId)
+    if (existingUsers && existingUsers.code === 200) {
+      const templateIndex = existingUsers.index.find(index => index.type === 'M9AUserConfig')
+      if (templateIndex && existingUsers.data[templateIndex.uid]) {
+        m9aUserTemplate.value = existingUsers.data[templateIndex.uid]
+        logger.info(`已加载M9A用户模板: ${templateIndex.uid}`)
+      }
+    }
+
     const result = await addUser(scriptId)
     if (result && result.userId) {
       userId = result.userId
       isEdit.value = true
+
+      if (m9aUserTemplate.value) {
+        const templateData = m9aUserTemplate.value
+        let ensuredQueue = templateData.Task?.Queue ?? '[]'
+        try {
+          const parsed = JSON.parse(ensuredQueue)
+          if (Array.isArray(parsed)) {
+            ensuredQueue = JSON.stringify(ensureFixedTailTask(parsed))
+          }
+        } catch {
+          ensuredQueue = JSON.stringify(ensureFixedTailTask([]))
+        }
+        await updateUser(scriptId, result.userId, {
+          Task: {
+            AvailableTasks: templateData.Task?.AvailableTasks ?? '[]',
+            Queue: ensuredQueue,
+          },
+          Notify: {
+            Enabled: templateData.Notify?.Enabled ?? false,
+            IfSendStatistic: templateData.Notify?.IfSendStatistic ?? false,
+            IfSendMail: templateData.Notify?.IfSendMail ?? false,
+            ToAddress: templateData.Notify?.ToAddress ?? '',
+            IfServerChan: templateData.Notify?.IfServerChan ?? false,
+            ServerChanKey: templateData.Notify?.ServerChanKey ?? '',
+          },
+          Info: {
+            RemainedDay: templateData.Info?.RemainedDay ?? -1,
+            Notes: templateData.Info?.Notes ?? '无',
+          },
+        })
+        logger.info('新用户已套用M9A模板配置')
+      }
+
       router.replace({
         name: route.name || undefined,
         params: { ...route.params, userId: result.userId },
@@ -224,9 +273,10 @@ const loadUserData = async () => {
 
           if (userData.Task?.Queue) {
             try {
-              taskQueue.value = JSON.parse(userData.Task.Queue)
+              const parsed = JSON.parse(userData.Task.Queue)
+              taskQueue.value = Array.isArray(parsed) ? ensureFixedTailTask(parsed) : ensureFixedTailTask([])
             } catch (e) {
-              taskQueue.value = []
+              taskQueue.value = ensureFixedTailTask([])
             }
           }
         }
