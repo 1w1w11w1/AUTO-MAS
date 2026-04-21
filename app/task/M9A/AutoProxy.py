@@ -81,10 +81,6 @@ class AutoProxyTask(TaskExecuteBase):
         self.m9a_task_loader = M9ATaskLoader(self.m9a_root_path)
         self.m9a_config_builder = M9AConfigBuilder(self.m9a_root_path)
 
-        # 初始化任务加载器和配置构建器
-        self.m9a_task_loader = M9ATaskLoader(self.m9a_root_path)
-        self.m9a_config_builder = M9AConfigBuilder(self.m9a_root_path)
-
     async def check(self) -> str:
 
         if self.script_config.get(
@@ -303,6 +299,7 @@ class AutoProxyTask(TaskExecuteBase):
             raise
 
         # 保存配置到 M9A 目录
+        self.m9a_tasks_path.parent.mkdir(parents=True, exist_ok=True)
         self.m9a_tasks_path.write_text(
             json.dumps(config, ensure_ascii=False, indent=2),
             encoding="utf-8"
@@ -390,21 +387,37 @@ class AutoProxyTask(TaskExecuteBase):
             self.wait_event.set()
 
     async def final_task(self):
-
-        if self.check_result != "Pass":
-            return
-
-        await self.m9a_process_manager.kill()
-        await System.kill_process(self.m9a_exe_path)  
-
-        logger.info("用户任务结束, 关闭模拟器")
-        # 2. 关闭模拟器
+        """
+        无论任务以何种方式结束（成功/失败/异常/手动停止），都尽最大努力清理：
+        - 停止日志监控（如已启动）
+        - 结束 M9A 进程
+        - 关闭模拟器
+        """
+        # 1) 停止日志监控（如果已启动）
         try:
-            await self.emulator_manager.close(
-                self.script_config.get("Emulator", "Index")
-            )
+            if hasattr(self, "m9a_log_monitor") and self.m9a_log_monitor is not None:
+                await self.m9a_log_monitor.stop()
         except Exception as e:
-            logger.exception(f"关闭模拟器失败：{e}")
+            logger.warning(f"停止 M9A 日志监控失败: {e}")
+
+        # 2) 结束 M9A 进程（如果已启动）
+        try:
+            if hasattr(self, "m9a_process_manager") and self.m9a_process_manager is not None:
+                await self.m9a_process_manager.kill()
+        except Exception as e:
+            logger.warning(f"结束 M9A 进程失败: {e}")
+
+        try:
+            await System.kill_process(self.m9a_exe_path)
+        except Exception as e:
+            logger.warning(f"强制结束 M9A.exe 失败: {e}")
+
+        # 3) 关闭模拟器（如果已启动）
+        logger.info("用户任务结束, 尝试关闭模拟器")
+        try:
+            await self.emulator_manager.close(self.script_config.get("Emulator", "Index"))
+        except Exception as e:
+            logger.warning(f"关闭模拟器失败: {e}")
 
         # 3. 保存历史记录
         user_logs_list = []
@@ -464,6 +477,7 @@ class AutoProxyTask(TaskExecuteBase):
             )
 
         if self.run_complete:
+            await self.cur_user_config.set("Data", "LastProxyStatus", "成功")
             if (
                 self.cur_user_config.get("Data", "ProxyTimes") == 0
                 and self.cur_user_config.get("Info", "RemainedDay") != -1
@@ -473,11 +487,6 @@ class AutoProxyTask(TaskExecuteBase):
                     "RemainedDay",
                     self.cur_user_config.get("Info", "RemainedDay") - 1,
                 )
-            await self.cur_user_config.set(
-                "Data",
-                "ProxyTimes",
-                self.cur_user_config.get("Data", "ProxyTimes") + 1,
-            )
 
             self.cur_user_item.status = "完成"
             logger.success(f"用户 {self.cur_user_uid} 的自动代理任务已完成")
@@ -488,6 +497,7 @@ class AutoProxyTask(TaskExecuteBase):
                 3,
             )
         else:
+            await self.cur_user_config.set("Data", "LastProxyStatus", "失败")
             logger.error(f"用户 {self.cur_user_uid} 的自动代理任务未完成")
             self.cur_user_item.status = "异常"
 
