@@ -335,13 +335,6 @@ class MaaUserConfig(ConfigBase):
         self.Data_ProxyTimes = ConfigItem(
             "Data", "ProxyTimes", 0, RangeValidator(0, 9999)
         )
-        ## 上次运行状态
-        self.Data_LastProxyStatus = ConfigItem(
-            "Data",
-            "LastProxyStatus",
-            "未知",
-            OptionsValidator(["未知", "成功", "失败"]),
-        )
         ## 是否通过检查
         self.Data_IfPassCheck = ConfigItem("Data", "IfPassCheck", True, BoolValidator())
         ## 自定义基建配置
@@ -452,64 +445,19 @@ class MaaUserConfig(ConfigBase):
         if not self.get("Data", "IfPassCheck"):
             tags.append({"text": "人工排查未通过", "color": "red"})
 
-        last_proxy_status = self.get("Data", "LastProxyStatus")
-        tags.append(
-            {
-                "text": f"上次运行：{last_proxy_status}",
-                "color": (
-                    "green"
-                    if last_proxy_status == "成功"
-                    else "red" if last_proxy_status == "失败" else "gray"
-                ),
-            }
-        )
-
-        now_utc4 = datetime.now(tz=UTC4)
-        last_proxy_date_str = self.get("Data", "LastProxyDate")
-        is_today = (
-            datetime.strptime(last_proxy_date_str, "%Y-%m-%d").date() == now_utc4.date()
-        )
-        week_start = now_utc4.date() - timedelta(days=now_utc4.weekday())
-        is_this_week = datetime.strptime(last_proxy_date_str, "%Y-%m-%d").date() >= week_start
-        is_last_success = last_proxy_status == "成功"
-
-        queue = self.get("Task", "Queue")
-        if isinstance(queue, str):
-            try:
-                queue = json.loads(queue)
-            except json.JSONDecodeError:
-                queue = []
-        if not isinstance(queue, list):
-            queue = []
-
-        task_names = set()
-        for item in queue:
-            if isinstance(item, dict) and item.get("name"):
-                task_names.add(item["name"])
-            elif isinstance(item, str):
-                task_names.add(item)
-
-        if "每日心相（意志解析）" in task_names:
+        # 日常代理标签（使用东4区时间）
+        if (
+            datetime.strptime(self.get("Data", "LastProxyDate"), "%Y-%m-%d").date()
+            == datetime.now(tz=UTC4).date()
+        ):
             tags.append(
                 {
-                    "text": f"每日心相：{'已完成' if (is_today and is_last_success) else '未完成'}",
-                    "color": "green" if (is_today and is_last_success) else "orange",
+                    "text": f"日常：已代理{self.get('Data', 'ProxyTimes')}次",
+                    "color": "green",
                 }
             )
-        if "自动醒梦" in task_names:
-            tags.append(
-                {
-                    "text": f"自动醒梦：{'已完成' if (is_this_week and is_last_success) else '未完成'}",
-                    "color": "green" if (is_this_week and is_last_success) else "orange",
-                }
-            )
-        if "自动深眠" in task_names:
-            tags.append(
-                {
-                    "text": f"自动深眠：{'已完成' if (is_this_week and is_last_success) else '未完成'}",
-                    "color": "green" if (is_this_week and is_last_success) else "orange",
-                }
-            )
+        else:
+            tags.append({"text": "日常：未代理", "color": "orange"})
 
         # 森空岛签到标签（使用东8区时间）
         if self.get("Info", "IfSkland"):
@@ -1206,13 +1154,6 @@ class SrcUserConfig(ConfigBase):
         self.Data_ProxyTimes = ConfigItem(
             "Data", "ProxyTimes", 0, RangeValidator(0, 9999)
         )
-        ## 上次运行状态
-        self.Data_LastProxyStatus = ConfigItem(
-            "Data",
-            "LastProxyStatus",
-            "未知",
-            OptionsValidator(["未知", "成功", "失败"]),
-        )
         ## 是否通过检查
         self.Data_IfPassCheck = ConfigItem("Data", "IfPassCheck", True, BoolValidator())
 
@@ -1455,19 +1396,66 @@ class M9AUserConfig(ConfigBase):
         if not self.get("Data", "IfPassCheck"):
             tags.append({"text": "人工排查未通过", "color": "red"})
 
-        # 日常代理标签（使用东4区时间）
-        if (
-            datetime.strptime(self.get("Data", "LastProxyDate"), "%Y-%m-%d").date()
-            == datetime.now(tz=UTC4).date()
-        ):
+        # 上次运行状态标签
+        last_proxy_status = self.get("Data", "LastProxyStatus")
+        tags.append(
+            {
+                "text": f"上次运行：{last_proxy_status}",
+                "color": (
+                    "green"
+                    if last_proxy_status == "成功"
+                    else "red" if last_proxy_status == "失败" else "gray"
+                ),
+            }
+        )
+
+        now_utc4 = datetime.now(tz=UTC4)
+        last_proxy_date_str = self.get("Data", "LastProxyDate")
+        is_today = (
+            datetime.strptime(last_proxy_date_str, "%Y-%m-%d").date() == now_utc4.date()
+        )
+        week_start = now_utc4.date() - timedelta(days=now_utc4.weekday())
+        is_this_week = datetime.strptime(last_proxy_date_str, "%Y-%m-%d").date() >= week_start
+        is_last_success = last_proxy_status == "成功"
+
+        # 根据队列中任务显示对应任务的完成状态
+        queue = self.get("Task", "Queue")
+        if isinstance(queue, str):
+            try:
+                queue = json.loads(queue)
+            except json.JSONDecodeError:
+                queue = []
+        if not isinstance(queue, list):
+            queue = []
+
+        task_names = set()
+        for item in queue:
+            if isinstance(item, dict) and item.get("name"):
+                task_names.add(item["name"])
+            elif isinstance(item, str):
+                task_names.add(item)
+
+        if "每日心相（意志解析）" in task_names:
             tags.append(
                 {
-                    "text": f"日常：已代理{self.get('Data', 'ProxyTimes')}次",
-                    "color": "green",
+                    "text": f"每日心相：{'已完成' if (is_today and is_last_success) else '未完成'}",
+                    "color": "green" if (is_today and is_last_success) else "orange",
                 }
             )
-        else:
-            tags.append({"text": "日常：未代理", "color": "orange"})
+        if "自动醒梦" in task_names:
+            tags.append(
+                {
+                    "text": f"自动醒梦：{'已完成' if (is_this_week and is_last_success) else '未完成'}",
+                    "color": "green" if (is_this_week and is_last_success) else "orange",
+                }
+            )
+        if "自动深眠" in task_names:
+            tags.append(
+                {
+                    "text": f"自动深眠：{'已完成' if (is_this_week and is_last_success) else '未完成'}",
+                    "color": "green" if (is_this_week and is_last_success) else "orange",
+                }
+            )
 
         # 剩余天数标签
         remained_day = self.get("Info", "RemainedDay")

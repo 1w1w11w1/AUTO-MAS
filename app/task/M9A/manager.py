@@ -219,13 +219,6 @@ class M9AManager(TaskExecuteBase):
         except Exception as e:
             logger.warning(f"解锁脚本配置失败: {e}")
 
-        # 尝试关闭模拟器（AutoProxy 模式下通常会打开）
-        try:
-            if hasattr(self, "emulator_manager") and self.emulator_manager is not None:
-                await self.emulator_manager.close(self.script_config.get("Emulator", "Index"))
-        except Exception as e:
-            logger.warning(f"关闭模拟器失败: {e}")
-
         # 落盘用户配置（如果已加载）
         try:
             if hasattr(self, "user_config") and self.user_config is not None:
@@ -233,42 +226,42 @@ class M9AManager(TaskExecuteBase):
         except Exception as e:
             logger.warning(f"保存用户配置失败: {e}")
 
-            error_user = [
-                u.name for u in self.script_info.user_list if u.status == "异常"
-            ]
-            over_user = [
-                u.name for u in self.script_info.user_list if u.status == "完成"
-            ]
-            wait_user = [
-                u.name for u in self.script_info.user_list if u.status == "等待"
-            ]
+        error_user = [
+            u.name for u in self.script_info.user_list if u.status == "异常"
+        ]
+        over_user = [
+            u.name for u in self.script_info.user_list if u.status == "完成"
+        ]
+        wait_user = [
+            u.name for u in self.script_info.user_list if u.status == "等待"
+        ]
 
-            title = f"{datetime.now().strftime('%m-%d')} | {self.script_info.name or '空白'}的{TASK_MODE_ZH[self.task_info.mode]}任务报告"
-            result = {
-                "title": f"{TASK_MODE_ZH[self.task_info.mode]}任务报告",
-                "script_name": self.script_info.name or "空白",
-                "start_time": self.begin_time,
-                "end_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "completed_count": len(over_user),
-                "uncompleted_count": len(error_user) + len(wait_user),
-                "result": self.script_info.result,
-            }
+        title = f"{datetime.now().strftime('%m-%d')} | {self.script_info.name or '空白'}的{TASK_MODE_ZH[self.task_info.mode]}任务报告"
+        result = {
+            "title": f"{TASK_MODE_ZH[self.task_info.mode]}任务报告",
+            "script_name": self.script_info.name or "空白",
+            "start_time": self.begin_time,
+            "end_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "completed_count": len(over_user),
+            "uncompleted_count": len(error_user) + len(wait_user),
+            "result": self.script_info.result,
+        }
 
-            await Notify.push_plyer(
-                title.replace("报告", "已完成！"),
-                f"已完成用户数: {len(over_user)}, 未完成用户数: {len(error_user) + len(wait_user)}",
-                f"已完成用户数: {len(over_user)}, 未完成用户数: {len(error_user) + len(wait_user)}",
-                10,
+        await Notify.push_plyer(
+            title.replace("报告", "已完成！"),
+            f"已完成用户数: {len(over_user)}, 未完成用户数: {len(error_user) + len(wait_user)}",
+            f"已完成用户数: {len(over_user)}, 未完成用户数: {len(error_user) + len(wait_user)}",
+            10,
+        )
+        try:
+            await push_notification("代理结果", title, result, None)
+        except Exception as e:
+            logger.exception(f"推送代理结果时出现异常: {e}")
+            await Config.send_websocket_message(
+                id=self.task_info.task_id,
+                type="Info",
+                data={"Error": f"推送代理结果时出现异常: {e}"},
             )
-            try:
-                await push_notification("代理结果", title, result, None)
-            except Exception as e:
-                logger.exception(f"推送代理结果时出现异常: {e}")
-                await Config.send_websocket_message(
-                    id=self.task_info.task_id,
-                    type="Info",
-                    data={"Error": f"推送代理结果时出现异常: {e}"},
-                )
 
         # 还原配置
         try:
