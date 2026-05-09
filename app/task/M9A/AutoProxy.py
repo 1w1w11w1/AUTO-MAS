@@ -477,7 +477,6 @@ class AutoProxyTask(TaskExecuteBase):
             )
 
         if self.run_complete:
-            await self.cur_user_config.set("Data", "LastProxyStatus", "成功")
             if (
                 self.cur_user_config.get("Data", "ProxyTimes") == 0
                 and self.cur_user_config.get("Info", "RemainedDay") != -1
@@ -497,7 +496,6 @@ class AutoProxyTask(TaskExecuteBase):
                 3,
             )
         else:
-            await self.cur_user_config.set("Data", "LastProxyStatus", "失败")
             logger.error(f"用户 {self.cur_user_uid} 的自动代理任务未完成")
             self.cur_user_item.status = "异常"
 
