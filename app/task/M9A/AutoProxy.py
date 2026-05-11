@@ -299,7 +299,6 @@ class AutoProxyTask(TaskExecuteBase):
             raise
 
         # 保存配置到 M9A 目录
-        self.m9a_tasks_path.parent.mkdir(parents=True, exist_ok=True)
         self.m9a_tasks_path.write_text(
             json.dumps(config, ensure_ascii=False, indent=2),
             encoding="utf-8"

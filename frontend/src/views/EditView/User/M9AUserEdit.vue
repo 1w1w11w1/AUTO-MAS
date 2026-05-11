@@ -1,6 +1,7 @@
 <template>
   <div class="user-edit-container">
     <M9AUserEditHeader :script-id="scriptId" :script-name="scriptName" :is-edit="isEdit" :loading="loading"
+      :user-id="userId"
       @handle-cancel="handleCancel" />
 
     <div class="user-edit-content">

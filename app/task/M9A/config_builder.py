@@ -297,8 +297,6 @@ class M9AConfigBuilder:
         options = []
         for user_opt in user_options:
             opt_name = user_opt.get("name")
-            if not opt_name:
-                continue
             opt_index = user_opt.get("index", 0)
             opt_item = {"name": opt_name, "index": opt_index}
             

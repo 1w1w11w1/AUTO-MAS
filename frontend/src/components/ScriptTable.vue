@@ -161,8 +161,7 @@
                         <div v-if="
                           script.type === 'MAA' ||
                           script.type === 'SRC' ||
-                          script.type === 'MaaEnd' ||
-                          script.type === 'M9A'
+                          script.type === 'MaaEnd'
                         " class="user-info-tags">
                           <!-- 直接使用后端提供的Tag字段 -->
                           <a-tag v-for="(tag, index) in parseStatusTagList(user.Info.Tag)" :key="index"
