@@ -25,8 +25,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import uuid
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, Callable, DefaultDict
 
 from app.utils import get_logger
@@ -98,12 +98,7 @@ class EventBus:
             ValueError: scope 不在允许值集合时抛出。
             ValueError: error_policy 不在允许值集合且不为 None 时抛出。
         """
-        if not isinstance(event, str):
-            raise TypeError("event 必须是字符串")
-
-        normalized_event = event.strip()
-        if not normalized_event:
-            raise ValueError("event 不能为空字符串")
+        normalized_event = self._normalize_event(event)
 
         if not callable(handler):
             raise TypeError("handler 必须可调用")
@@ -157,7 +152,9 @@ class EventBus:
         if handler is None and listener_id is None:
             raise ValueError("off 需要提供 handler 或 listener_id")
 
-        handlers = self._handlers.get(event)
+        normalized_event = self._normalize_event(event)
+
+        handlers = self._handlers.get(normalized_event)
         if not handlers:
             return
 
@@ -172,9 +169,9 @@ class EventBus:
                 filtered.append(item)
 
         if filtered:
-            self._handlers[event] = filtered
+            self._handlers[normalized_event] = filtered
         else:
-            self._handlers.pop(event, None)
+            self._handlers.pop(normalized_event, None)
 
     def off_by_instance(self, instance_id: str) -> None:
         """移除指定插件实例注册的全部监听器。"""
@@ -214,11 +211,19 @@ class EventBus:
             ValueError: scope 为 instance 且 source_instance_id 为空时抛出。
             EventDispatchError: 在 raise 策略下监听器执行失败时抛出聚合异常。
         """
+        normalized_event = self._normalize_event(event)
+
+        if scope not in {"global", "instance"}:
+            raise ValueError("scope 仅支持 global 或 instance")
+
+        if error_policy not in {"continue", "raise"}:
+            raise ValueError("error_policy 仅支持 continue 或 raise")
+
         if scope == "instance" and not source_instance_id:
             raise ValueError("instance 作用域事件必须提供 source_instance_id")
 
         async with self._lock:
-            snapshot = list(self._handlers.get(event, []))
+            snapshot = list(self._handlers.get(normalized_event, []))
 
         selected = [
             item
@@ -260,7 +265,7 @@ class EventBus:
 
         if errors:
             raise EventDispatchError(
-                f"事件分发失败: event={event}, count={len(errors)}"
+                f"事件分发失败: event={normalized_event}, count={len(errors)}"
             )
 
     async def _invoke_handler(
@@ -286,6 +291,17 @@ class EventBus:
             )
             if current_policy == "raise":
                 raise
+
+    @staticmethod
+    def _normalize_event(event: str) -> str:
+        """统一检查并规范化事件名。"""
+        if not isinstance(event, str):
+            raise TypeError("event 必须是字符串")
+
+        normalized_event = event.strip()
+        if not normalized_event:
+            raise ValueError("event 不能为空字符串")
+        return normalized_event
 
     @staticmethod
     def _should_dispatch(
