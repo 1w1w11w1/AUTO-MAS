@@ -311,7 +311,9 @@ def main():
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origin_regex=(
+            r"^(?:null|https?://(?:localhost|127\.0\.0\.1)(?::\d+)?)$"
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -321,7 +323,7 @@ def main():
         # 主 WebSocket 心跳依赖协议层 ping/pong，显式配置底层参数
         config = uvicorn.Config(
             app,
-            host="0.0.0.0",
+            host="127.0.0.1",
             port=36163,
             log_level="info",
             log_config=None,

@@ -497,8 +497,12 @@ const handleManualSign = async () => {
     if (response.code !== 200 && response.code !== 0) {
       throw new Error(response.message || '签到失败')
     }
-    logger.info('游戏签到完成')
-    message.success('签到完成')
+    logger.info(response.message || '游戏签到完成')
+    if (response.status === 'warning') {
+      message.warning(response.message)
+    } else {
+      message.success(response.message || '签到完成')
+    }
     // 立即刷新签到结果（不等父组件轮询）
     if (onRefreshConfig) await onRefreshConfig()
     await loadAccounts()

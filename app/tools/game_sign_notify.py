@@ -20,14 +20,103 @@
 #   Contact: DLmaster_361@163.com
 
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from functools import partial
+from html import escape
+
 from app.core import Config
 from app.services import Notify
 from app.utils.logger import get_logger
 
 logger = get_logger("游戏签到通知")
 
+NOTIFICATION_MAX_ATTEMPTS = 2
+NOTIFICATION_RETRY_DELAY_SECONDS = 1
 
-async def push_game_sign_notification(results: list[dict]) -> None:
+
+def build_game_sign_notification(results: list[dict]) -> tuple[str, str, str]:
+    """构建游戏签到通知的标题、纯文本和 HTML 内容。"""
+    title = "📅 游戏社区签到"
+
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for item in results:
+        account = str(item.get("account", "未知"))
+        alias = account.split("/")[0] if "/" in account else account
+        account_key = str(item.get("account_uid") or alias)
+        grouped.setdefault((account_key, alias), []).append(item)
+
+    lines = []
+    html_lines = []
+    success_count = 0
+    fail_count = 0
+
+    for (_, alias), items in grouped.items():
+        lines.append(f"No.{alias}:")
+        html_lines.append(f"<p><strong>No.{escape(alias)}:</strong></p>")
+        html_lines.append("<ul>")
+        for item in items:
+            game = str(item.get("game", "未知"))
+            status = item.get("status", "失败")
+            reward = str(item.get("reward", ""))
+            reason = str(item.get("reason", ""))
+
+            if status == "成功":
+                reward_text = f" ({reward})" if reward else ""
+                html_reward_text = f" ({escape(reward)})" if reward else ""
+                lines.append(f"  ✅ {game}: 成功{reward_text}")
+                html_lines.append(
+                    '<li><span style="background:green;color:white;padding:2px 6px;'
+                    'border-radius:3px;">✅</span> '
+                    f"{escape(game)}: 成功{html_reward_text}</li>"
+                )
+                success_count += 1
+            elif status == "已签到":
+                lines.append(f"  ✅ {game}: 已签")
+                html_lines.append(
+                    '<li><span style="background:green;color:white;padding:2px 6px;'
+                    'border-radius:3px;">✅</span> '
+                    f"{escape(game)}: 已签</li>"
+                )
+                success_count += 1
+            else:
+                reason_text = f" ({reason})" if reason else ""
+                html_reason_text = f" ({escape(reason)})" if reason else ""
+                lines.append(f"  ❌ {game}: 失败{reason_text}")
+                html_lines.append(
+                    '<li><span style="background:red;color:white;padding:2px 6px;'
+                    'border-radius:3px;">❌</span> '
+                    f"{escape(game)}: 失败{html_reason_text}</li>"
+                )
+                fail_count += 1
+        html_lines.append("</ul>")
+
+    summary = f"共 {len(grouped)} 个账号，成功 {success_count}，失败 {fail_count}"
+    lines.extend([f"\n{summary}", "AUTO-MAS 敬上"])
+    html_lines.extend([f"<p>{summary}</p>", "<p>AUTO-MAS 敬上</p>"])
+    return title, "\n".join(lines), "".join(html_lines)
+
+
+async def _send_with_retry(
+    channel: str, sender: Callable[[], Awaitable[object]]
+) -> str | None:
+    """发送单个通知渠道，失败时进行一次自动重试。"""
+    for attempt in range(1, NOTIFICATION_MAX_ATTEMPTS + 1):
+        try:
+            result = await sender()
+            if result is False:
+                raise RuntimeError("通知服务返回失败状态")
+            return None
+        except Exception as e:
+            if attempt < NOTIFICATION_MAX_ATTEMPTS:
+                logger.warning(f"推送{channel}通知失败，将自动重试: {e}")
+                await asyncio.sleep(NOTIFICATION_RETRY_DELAY_SECONDS)
+            else:
+                logger.error(f"推送{channel}通知失败: {e}")
+    return channel
+
+
+async def push_game_sign_notification(results: list[dict]) -> list[str]:
     """推送游戏签到结果通知
 
     遵循 Skland-Sign-In 通知格式风格：
@@ -42,127 +131,44 @@ async def push_game_sign_notification(results: list[dict]) -> None:
         results: 签到结果列表
     """
     if not results:
-        return
+        return []
 
-    title = "📅 游戏社区签到"
+    title, plain_text, html_content = build_game_sign_notification(results)
+    senders: list[tuple[str, Callable[[], Awaitable[object]]]] = []
 
-    # 按别名分组（别名 = account 中 '/' 前的部分）
-    grouped: dict[str, list[dict]] = {}
-    for item in results:
-        account = item.get("account", "未知")
-        alias = account.split("/")[0] if "/" in account else account
-        if alias not in grouped:
-            grouped[alias] = []
-        grouped[alias].append(item)
+    if Config.get("Notify", "IfPushPlyer"):
+        senders.append(
+            ("系统", partial(Notify.push_plyer, title, plain_text, title, 5))
+        )
 
-    # 构建纯文本消息
-    lines = []
-    success_count = 0
-    fail_count = 0
+    if Config.get("Notify", "IfSendMail"):
+        to_address = Config.get("Notify", "ToAddress")
+        senders.append(
+            ("邮件", partial(Notify.send_mail, "网页", title, html_content, to_address))
+        )
 
-    for alias, items in grouped.items():
-        lines.append(f"No.{alias}:")
-        for item in items:
-            game = item.get("game", "未知")
-            status = item.get("status", "失败")
-            reward = item.get("reward", "")
-            reason = item.get("reason", "")
+    if Config.get("Notify", "IfServerChan"):
+        send_key = Config.get("Notify", "ServerChanKey")
+        senders.append(
+            ("Server酱", partial(Notify.ServerChanPush, title, plain_text, send_key))
+        )
 
-            if status == "成功":
-                reward_text = f" ({reward})" if reward else ""
-                lines.append(f"  ✅ {game}: 成功{reward_text}")
-                success_count += 1
-            elif status == "已签到":
-                lines.append(f"  ✅ {game}: 已签")
-                success_count += 1
-            else:
-                reason_text = f" ({reason})" if reason else ""
-                lines.append(f"  ❌ {game}: 失败{reason_text}")
-                fail_count += 1
-
-    lines.append(f"\n共 {len(grouped)} 个账号，成功 {success_count}，失败 {fail_count}")
-    lines.append("AUTO-MAS 敬上")
-
-    plain_text = "\n".join(lines)
-
-    # 构建 HTML 版本（用于邮件）
-    html_lines = []
-    for alias, items in grouped.items():
-        html_lines.append(f'<p><strong>No.{alias}:</strong></p>')
-        html_lines.append('<ul>')
-        for item in items:
-            game = item.get("game", "未知")
-            status = item.get("status", "失败")
-            reward = item.get("reward", "")
-            reason = item.get("reason", "")
-
-            if status == "成功":
-                reward_text = f" ({reward})" if reward else ""
-                html_lines.append(
-                    f'<li><span style="background:green;color:white;padding:2px 6px;'
-                    f'border-radius:3px;">✅</span> '
-                    f"{game}: 成功{reward_text}</li>"
+    for uid, webhook in Config.Notify_CustomWebhooks.items():
+        if webhook.get("Info", "Enabled"):
+            senders.append(
+                (
+                    f"Webhook {uid}",
+                    partial(Notify.WebhookPush, title, plain_text, webhook),
                 )
-            elif status == "已签到":
-                html_lines.append(
-                    f'<li><span style="background:green;color:white;padding:2px 6px;'
-                    f'border-radius:3px;">✅</span> '
-                    f"{game}: 已签</li>"
-                )
-            else:
-                reason_text = f" ({reason})" if reason else ""
-                html_lines.append(
-                    f'<li><span style="background:red;color:white;padding:2px 6px;'
-                    f'border-radius:3px;">❌</span> '
-                    f"{game}: 失败{reason_text}</li>"
-                )
-        html_lines.append('</ul>')
+            )
 
-    html_lines.append(
-        f"<p>共 {len(grouped)} 个账号，成功 {success_count}，失败 {fail_count}</p>"
+    if Config.get("Notify", "IfKoishiSupport"):
+        senders.append(("Koishi", partial(Notify.send_koishi, plain_text)))
+
+    delivery_results = await asyncio.gather(
+        *(_send_with_retry(channel, sender) for channel, sender in senders)
     )
-    html_lines.append("<p>AUTO-MAS 敬上</p>")
-    html_content = "".join(html_lines)
-
-    # 分发到所有已启用的渠道
-    try:
-        # 系统通知
-        await Notify.push_plyer(title, plain_text, title, 5)
-    except Exception as e:
-        logger.warning(f"推送系统通知失败: {e}")
-
-    try:
-        # 邮件通知
-        if Config.get("Notify", "IfSendMail"):
-            to_address = Config.get("Notify", "ToAddress")
-            if to_address:
-                await Notify.send_mail("网页", title, html_content, to_address)
-    except Exception as e:
-        logger.warning(f"推送邮件通知失败: {e}")
-
-    try:
-        # Server酱通知
-        if Config.get("Notify", "IfServerChan"):
-            send_key = Config.get("Notify", "ServerChanKey")
-            if send_key:
-                await Notify.ServerChanPush(title, plain_text, send_key)
-    except Exception as e:
-        logger.warning(f"推送Server酱通知失败: {e}")
-
-    try:
-        # Webhook 通知
-        for uid, webhook in Config.Notify_CustomWebhooks.items():
-            if webhook.get("Info", "Enabled"):
-                try:
-                    await Notify.WebhookPush(title, plain_text, webhook)
-                except Exception as e:
-                    logger.warning(f"推送 Webhook {uid} 通知失败: {e}")
-    except Exception as e:
-        logger.warning(f"推送Webhook通知失败: {e}")
-
-    try:
-        # Koishi 通知
-        if Config.get("Notify", "IfKoishiSupport"):
-            await Notify.send_koishi(plain_text)
-    except Exception as e:
-        logger.warning(f"推送Koishi通知失败: {e}")
+    failures = [channel for channel in delivery_results if channel is not None]
+    if failures:
+        logger.warning(f"游戏签到通知部分发送失败: {', '.join(failures)}")
+    return failures

@@ -22,7 +22,6 @@
 
 
 from fastapi import APIRouter, Body
-from datetime import datetime
 from app.core import Config
 from app.models.schema import (
     ToolsGetOut,
@@ -39,6 +38,28 @@ from app.models.schema import (
 )
 
 router = APIRouter(prefix="/api/tools", tags=["工具设置"])
+
+GAME_SIGN_TOKEN_FIELDS = {"MiyousheToken", "KuroToken", "SklandToken"}
+GAME_SIGN_TOKEN_MASK = "********"
+
+
+def _mask_game_sign_account(data: dict) -> dict:
+    """隐藏账号接口响应中的社区登录凭证。"""
+    return {
+        key: GAME_SIGN_TOKEN_MASK if key in GAME_SIGN_TOKEN_FIELDS and value else value
+        for key, value in data.items()
+    }
+
+
+def _mask_game_sign_accounts(data: dict) -> dict:
+    """隐藏账号列表响应中的社区登录凭证。"""
+    for value in data.values():
+        if not isinstance(value, dict):
+            continue
+        account = value.get("GameSignAccount")
+        if isinstance(account, dict):
+            value["GameSignAccount"] = _mask_game_sign_account(account)
+    return data
 
 
 @router.post(
@@ -95,36 +116,34 @@ async def manual_game_sign() -> OutBase:
     """手动触发游戏社区签到"""
 
     try:
-        from app.tools.game_sign import run_all_sign_in, format_sign_results
-        from app.tools.game_sign import merge_sign_results
+        from app.tools.game_sign import execute_game_sign
 
-        results = await run_all_sign_in(force=True)
-
-        # 格式化并存储结果
-        formatted = format_sign_results(results)
-        # 合并结果（手动签到按 account_uid 替换旧数据）
-        Config.ToolsConfig._game_sign_result_data = merge_sign_results(
-            Config.ToolsConfig._game_sign_result_data, formatted, replace=True
-        )
-
-        # 标记今天已签到（仅当所有启用的用户都已签到时标记全局）
-        today = datetime.now().strftime("%Y-%m-%d")
-        all_signed = True
-        for uid, account in Config.ToolsConfig.GameSign_Accounts.items():
-            if account.get("GameSignAccount", "Enabled"):
-                if account.get("GameSignAccount", "LastSignDate") != today:
-                    all_signed = False
-                    break
-        if all_signed:
-            await Config.ToolsConfig.set("GameSign", "LastSignDate", today)
+        results, is_owner = await execute_game_sign(force=True)
         # 清除计划时间
         await Config.ToolsConfig.set("GameSign", "ScheduledTime", "")
+
+        if not results:
+            return OutBase(
+                code=400,
+                status="error",
+                message="没有可执行的签到账号，请检查账号、Token 和启用状态",
+            )
+
+        if is_owner and Config.ToolsConfig.get("GameSign", "NotifyEnabled"):
+            from app.tools.game_sign_notify import push_game_sign_notification
+
+            failures = await push_game_sign_notification(results)
+            if failures:
+                return OutBase(
+                    status="warning",
+                    message=f"签到完成，但以下通知渠道发送失败: {', '.join(failures)}",
+                )
 
     except Exception as e:
         return OutBase(
             code=500, status="error", message=f"{type(e).__name__}: {str(e)}"
         )
-    return OutBase()
+    return OutBase(message="签到完成")
 
 
 # ==================== 游戏签到账号组 CRUD ====================
@@ -141,7 +160,7 @@ async def list_game_sign_accounts() -> GameSignAccountsListOut:
     """获取所有游戏签到账号组"""
 
     try:
-        data = await Config.get_game_sign_accounts()
+        data = _mask_game_sign_accounts(await Config.get_game_sign_accounts())
     except Exception as e:
         return GameSignAccountsListOut(
             code=500,
@@ -166,7 +185,7 @@ async def add_game_sign_account() -> GameSignAccountCreateOut:
         uid, config = await Config.add_game_sign_account()
         # toDict() 返回 {"GameSignAccount": {fields}}，需提取嵌套字典
         raw = await config.toDict()
-        flat = raw.get("GameSignAccount", raw)
+        flat = _mask_game_sign_account(raw.get("GameSignAccount", raw))
         data = GameSignAccountGroupConfig(**flat)
         # 新增账号无需清空结果，因为新账号没有历史结果
     except Exception as e:
@@ -195,7 +214,7 @@ async def get_game_sign_account(
     try:
         raw = await Config.get_game_sign_account(account.accountId)
         # toDict() 返回 {"GameSignAccount": {fields}}，需提取嵌套字典
-        flat = raw.get("GameSignAccount", raw)
+        flat = _mask_game_sign_account(raw.get("GameSignAccount", raw))
         account_data = GameSignAccountGroupConfig(**flat)
     except Exception as e:
         return GameSignAccountCreateOut(
@@ -222,12 +241,15 @@ async def update_game_sign_account(
 
     try:
         # GameSignAccountGroupConfig 是扁平格式，需包装为 {group: {name: value}} 传给 ConfigBase.set
-        flat_data = account.data.model_dump(exclude_unset=True)
+        flat_data = {
+            key: value
+            for key, value in account.data.model_dump(exclude_unset=True).items()
+            if key not in GAME_SIGN_TOKEN_FIELDS or value != GAME_SIGN_TOKEN_MASK
+        }
         data = {"GameSignAccount": flat_data}
         await Config.update_game_sign_account(account.accountId, data)
         # Token 变更后只清空该账号的签到结果
-        token_fields = {"MiyousheToken", "KuroToken", "SklandToken"}
-        if token_fields & set(flat_data.keys()):
+        if GAME_SIGN_TOKEN_FIELDS & set(flat_data.keys()):
             result = Config.ToolsConfig._game_sign_result_data
             account_uid = str(account.accountId)
             for platform in list(result.keys()):

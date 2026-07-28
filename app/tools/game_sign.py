@@ -32,6 +32,12 @@ from .game_sign_result import build_skland_sign_results
 
 logger = get_logger("游戏社区签到")
 
+_active_game_sign_task: asyncio.Task[list[dict]] | None = None
+
+
+class GameSignTimeError(RuntimeError):
+    """系统时间异常导致签到无法安全执行。"""
+
 
 async def _check_system_time() -> bool:
     """校准系统时间，避免因时间偏差导致签到失败
@@ -74,8 +80,7 @@ async def run_all_sign_in(force: bool = False) -> list[dict]:
 
     # 时间校准：偏差过大时跳过本轮签到，避免因时间错误导致 API 失败
     if not await _check_system_time():
-        logger.warning("系统时间偏差过大，跳过本轮游戏社区签到")
-        return results
+        raise GameSignTimeError("系统时间偏差过大，请校准系统时间后重试")
 
     for uid, account in Config.ToolsConfig.GameSign_Accounts.items():
         account_name = account.get("GameSignAccount", "Name") or "默认账号"
@@ -279,7 +284,7 @@ def merge_sign_results(existing: dict, formatted: dict, replace: bool = False) -
 def format_sign_results(results: list[dict]) -> dict:
     """将签到结果格式化为前端可展示的结构
 
-    按平台分组，平台内按别名去重
+    按平台分组，平台内按 account_uid 区分账号
 
     Returns:
         {platform: [{account_alias, account_uid, games: [{game, status, reward, reason}]}]}
@@ -296,14 +301,15 @@ def format_sign_results(results: list[dict]) -> dict:
         if platform not in platforms:
             platforms[platform] = {}
 
-        if alias not in platforms[platform]:
-            platforms[platform][alias] = {
+        account_key = account_uid or alias
+        if account_key not in platforms[platform]:
+            platforms[platform][account_key] = {
                 "account_alias": alias,
                 "account_uid": account_uid,
                 "games": [],
             }
 
-        platforms[platform][alias]["games"].append({
+        platforms[platform][account_key]["games"].append({
             "game": item.get("game", "未知"),
             "status": item.get("status", "失败"),
             "reward": item.get("reward", ""),
@@ -316,3 +322,54 @@ def format_sign_results(results: list[dict]) -> dict:
         result[platform] = list(accounts.values())
 
     return result
+
+
+async def _execute_game_sign_once(force: bool) -> list[dict]:
+    """执行一次签到并在同一任务内更新共享结果。"""
+    results = await run_all_sign_in(force=force)
+
+    if results:
+        formatted = format_sign_results(results)
+        Config.ToolsConfig._game_sign_result_data = merge_sign_results(
+            Config.ToolsConfig._game_sign_result_data,
+            formatted,
+            replace=force,
+        )
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    enabled_accounts = [
+        account
+        for _, account in Config.ToolsConfig.GameSign_Accounts.items()
+        if account.get("GameSignAccount", "Enabled")
+    ]
+    if enabled_accounts and all(
+        account.get("GameSignAccount", "LastSignDate") == today
+        for account in enabled_accounts
+    ):
+        await Config.ToolsConfig.set("GameSign", "LastSignDate", today)
+
+    return results
+
+
+async def execute_game_sign(force: bool = False) -> tuple[list[dict], bool]:
+    """执行签到，复用正在运行的任务以避免并发写入和重复请求。
+
+    Returns:
+        签到结果，以及当前调用是否创建了本次签到任务。
+    """
+    global _active_game_sign_task
+
+    task = _active_game_sign_task
+    if task is None or task.done():
+        is_owner = True
+        task = asyncio.create_task(_execute_game_sign_once(force=force))
+        _active_game_sign_task = task
+    else:
+        is_owner = False
+        logger.info("已有游戏社区签到正在执行，等待当前任务完成")
+
+    try:
+        return await asyncio.shield(task), is_owner
+    finally:
+        if task.done() and _active_game_sign_task is task:
+            _active_game_sign_task = None
