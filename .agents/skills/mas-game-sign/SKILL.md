@@ -187,7 +187,7 @@ reason        失败原因
 
 ## 最小验证
 
-按 `tests/AGENTS.md`，开发时在 `tests/tools/` 下编写签到测试用于本地验证（`test_game_sign.py`、`test_game_sign_notification.py`、`test_miyoushe_qr.py`、`test_miyoushe_retry.py`、`test_contracts.py` 等）。
+改动现场就地写签到验证用例并本地跑一遍，跑完不提交；仓库只留跨功能通用的公共与纯逻辑测试（判据见根目录 `AGENTS.md`「分支与 PR」）。
 
 提交或提 PR 时，测试文件的取舍见根目录 `AGENTS.md`「分支与 PR」。
 

@@ -107,14 +107,14 @@ Maintenance note: the warning budget of 1 exists only because that single `vue/n
 | --- | --- | --- |
 | Any business code | `yarn lint --max-warnings 1` | exit 0. The budget of 1 covers the single known warning (`vue/no-v-html`, introduced with #399), so any additional warning fails the gate. Plain `yarn lint` prints warnings but does not fail on them. |
 | Types, props/emits, API usage, generated-client consumption | `yarn typecheck` | 0 errors |
-| A module with a sibling `*.test.ts`, or shared logic/styles under test | `yarn test` | fully green |
+| A change touching the retained pure-logic/shared-constraint tests (`src/utils/`, `src/i18n/`, `src/styles/`, `src/services/websocket/`) | `yarn test` | fully green |
 | Build, routing, or Electron entry | `yarn build` | succeeds |
 | Documentation only | file existence, headings, sections, `git status --short` | — |
 | UI | also follow `mas-frontend-ui` verification | — |
 
 Rules:
 
-1. Run all three gates whole — `yarn lint --max-warnings 1`, `yarn typecheck`, `yarn test`. They can and should pass; there is no baseline to subtract. Use the `--max-warnings` form, not plain `yarn lint`, or new warnings slip through.
+1. Run all three gates whole — `yarn lint --max-warnings 1`, `yarn typecheck`, `yarn test`. They can and should pass; there is no baseline to subtract. Use the `--max-warnings` form, not plain `yarn lint`, or new warnings slip through. `yarn test` only covers the tests the repo retains (pure logic and shared constraints), not the throwaway ones you wrote to verify this change.
 2. Lint and typecheck are still orthogonal — they check different things, so passing one says nothing about the other. Run both.
 3. `yarn lint:fix` resolves `prettier/prettier` findings; use it rather than hand-formatting. Warnings are part of the gate — do not leave a new one behind.
 4. A failure in any of the three is yours until proven otherwise. If you believe it pre-exists, verify on an untouched checkout and say so explicitly in your result.
