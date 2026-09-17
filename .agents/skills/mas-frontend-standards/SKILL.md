@@ -129,9 +129,9 @@ Vitest runs with **no config file and no DOM environment**. There is no `vitest.
 
 Three established patterns, in order of preference:
 
-1. **Pure logic** — extract the logic out of the `.vue` file into a sibling `.ts`, then import and test it directly. `views/scripts/scriptSearch.ts` with `scriptSearch.test.ts` is the reference. This is the main reason to extract logic from a component: testability.
-2. **Composables** — test in node with `vi.mock()` for boundaries. Mock `@/api` (the generated `Service`) and `ant-design-vue` (`message`) rather than reaching for a DOM. See `composables/useEmulatorDeviceOptions.test.ts`.
-3. **Component structure** — `readFileSync` the `.vue` (or `.css`) source and assert on its text. Used to lock in constraints that have no runtime assertion point, such as overlay `z-index`, viewport-height clamps, and stylesheet imports. See `views/scripts/components/ScriptCreateDialog.test.ts` and `styles/scrollbar.test.ts`.
+1. **Pure logic** — extract the logic out of the `.vue` file into a sibling `.ts` and call it directly. This is the main reason to extract logic from a component: it makes the logic verifiable. Keep the `.test.ts` only if the logic is a cross-cutting utility (that is what `src/utils/` holds); otherwise verify and drop it.
+2. **Composables** — verify in node with `vi.mock()` for the boundaries. Mock `@/api` (the generated `Service`) and `ant-design-vue` (`message`) rather than reaching for a DOM. These verifications are throwaway unless the composable is shared infrastructure such as `src/services/websocket/`.
+3. **Shared constraints** — `readFileSync` the `.vue` (or `.css`) source and assert on its text, for long-lived constraints with no runtime assertion point: overlay `z-index`, viewport-height clamps, global stylesheet imports. These source-text tests are kept (see `styles/scrollbar.test.ts`). When you change such a constraint, update the matching assertion in the same change.
 
 Do not introduce `mount()`, `jsdom`, `happy-dom`, or `@vue/test-utils` for a routine change; that is a project-wide testing-stack decision, not a task-level one. If a behavior genuinely cannot be covered by these three patterns, say so in your result instead of adding a test dependency.
 
