@@ -248,7 +248,7 @@ class ScriptConfigTask(TaskExecuteBase):
 
         logger.info(f"开始配置MAA运行参数: 设置脚本 {self.cur_user_item.user_id}")
 
-        await self.maa_process_manager.kill()
+        await self.maa_process_manager.stop_gracefully(30)
         await System.kill_process(self.maa_exe_path)
 
         # 查看会话的脚本级入口：原生目录即所选备份，跳过下发与注入
@@ -374,14 +374,9 @@ class ScriptConfigTask(TaskExecuteBase):
 
     async def final_task(self):
 
-        # 先请 MAA 自行退出走它的退出保存流程，把用户在 GUI 里的改动落盘；
-        # 直接强杀会打断退出保存，导致本次设置丢失、下次启动恢复原样
-        if await self.maa_process_manager.is_running():
-            if await self.maa_process_manager.close_window():
-                logger.info("已请求 MAA 关闭, 等待其保存配置并退出")
-            if not await self.maa_process_manager.wait_for_exit(15):
-                logger.warning("MAA 未在限定时间内自行退出, 强制结束")
-        await self.maa_process_manager.kill()
+        # MAA 的改动只堆在内存里，退出时才批量落盘；先把关闭请求发出去等它
+        # 自己走完保存流程，直接强杀会让本次设置丢失、下次启动恢复原样
+        await self.maa_process_manager.stop_gracefully(30)
         await System.kill_process(self.maa_exe_path)
 
         # 查看会话：只读预览，不把安装 config/ 回写用户目录（安装现场由

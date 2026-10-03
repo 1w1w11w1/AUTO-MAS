@@ -516,14 +516,20 @@ class ProcessManager:
         except Exception:
             return False
 
-    async def close_window(self) -> bool:
-        """请求关闭主进程窗口，让应用自行走退出保存流程"""
+    async def stop_gracefully(self, timeout_seconds: float) -> None:
+        """优先请被管理进程自行退出走完它的保存流程，超时或无法请求关闭时才强制结束"""
 
-        hwnd = self.main_hwnd
-        if hwnd is None:
-            return False
+        if await self.is_running():
+            hwnd = self.main_hwnd
+            closed = False
+            if hwnd is not None:
+                try:
+                    closed = window.close_window(hwnd)
+                except Exception:
+                    closed = False
+            if not closed:
+                logger.warning("未能请求进程自行关闭, 直接强制结束")
+            elif not await self.wait_for_exit(timeout_seconds):
+                logger.warning(f"进程未在 {timeout_seconds} 秒内自行退出, 强制结束")
 
-        try:
-            return window.close_window(hwnd)
-        except Exception:
-            return False
+        await self.kill()

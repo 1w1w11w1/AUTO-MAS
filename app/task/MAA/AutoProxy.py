@@ -1130,15 +1130,6 @@ class AutoProxyTask(ScriptAutoProxyBase):
                             "Data", "LastResVersion", self.pending_res_version
                         )
                         self.if_game_hot_update = False
-                    # PostActions 自带退出位，MAA 完成代理后会自行退出并把
-                    # GUI 配置落盘；等它退干净再回写，避免读到退出保存前的
-                    # 旧配置，也避免下一轮注入撞上它的退出保存窗口
-                    if not await self.maa_process_manager.wait_for_exit(90):
-                        logger.warning(
-                            f"用户: {self.cur_user_uid} - MAA 未在限定时间内自行退出, 强制结束"
-                        )
-                        await self.maa_process_manager.kill()
-                        await System.kill_process(self.maa_exe_path)
                 else:
                     logger.warning(
                         f"用户: {self.cur_user_uid} - 代理任务异常: {self.cur_user_log.status}"
@@ -1147,7 +1138,7 @@ class AutoProxyTask(ScriptAutoProxyBase):
                         f"{self.cur_user_log.status}\n正在中止相关程序"
                     )
 
-                    await self.maa_process_manager.kill()
+                    await self.maa_process_manager.stop_gracefully(30)
                     # 关模拟器之前把现场画面留下来：模拟器一关 adb 就补不到了。
                     # 每次失败尝试都刷新，最后一次失败的画面才是最终现场。
                     self._failure_shot = await self._take_failure_shot()
@@ -1440,7 +1431,7 @@ class AutoProxyTask(ScriptAutoProxyBase):
 
         logger.info(f"开始配置MAA运行参数: {self.mode}")
 
-        await self.maa_process_manager.kill()
+        await self.maa_process_manager.stop_gracefully(30)
         await System.kill_process(self.maa_exe_path)
 
         # 哔哩哔哩用户协议
@@ -2219,7 +2210,7 @@ class AutoProxyTask(ScriptAutoProxyBase):
         logger.info("MAA 收尾: 停止日志监控")
         await self.maa_log_monitor.stop()
         logger.info("MAA 收尾: 停止 MAA 进程")
-        await self.maa_process_manager.kill()
+        await self.maa_process_manager.stop_gracefully(30)
         await System.kill_process(self.maa_exe_path)
         logger.info(f"MAA 收尾: 结束残留 MAA 进程: {self.maa_exe_path}")
 
