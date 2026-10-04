@@ -47,7 +47,12 @@ export function migrateLocalStorage(options: MigrateLocalStorageOptions): boolea
       if (!fs.existsSync(from) || fs.existsSync(to)) {
         continue
       }
-      fs.cpSync(from, to, { recursive: true })
+      // 先拷到临时目录再改名：中途失败（磁盘满、被占用）只留下 .tmp，to 不会出现
+      // 半成品，下次启动就会整份重来，而不是被 existsSync(to) 挡成永久跳过。
+      const staging = `${to}.tmp`
+      fs.rmSync(staging, { recursive: true, force: true })
+      fs.cpSync(from, staging, { recursive: true })
+      fs.renameSync(staging, to)
       copied.push(dirName)
     }
     if (copied.length === 0) {
