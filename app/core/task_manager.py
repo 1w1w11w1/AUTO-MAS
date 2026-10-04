@@ -163,6 +163,13 @@ CYCLE_PREVIEW_REFRESH_SECONDS = 5
 # 预览展示的条目数
 CYCLE_PREVIEW_SIZE = 4
 
+# 队列级额外脚本：开关项、路径项与日志标签成对收在一处，调用点只报阶段，
+# 免得三处各写一份魔法字符串、把键名写反了也不报错。
+QUEUE_EXTRA_SCRIPTS: dict[str, tuple[str, str, str]] = {
+    "before": ("IfScriptBeforeTask", "ScriptBeforeTask", "队列运行前脚本"),
+    "after": ("IfScriptAfterTask", "ScriptAfterTask", "队列运行后脚本"),
+}
+
 
 class _ScriptTaskReservations:
     """为脚本任务提供原子、带所有者的进程内占用。"""
@@ -491,19 +498,9 @@ class Task(TaskExecuteBase):
             return
 
         # 循环队列每轮跑一对队列级脚本，与账号数量无关。
-        await self._run_queue_extra_script(
-            str(queue_uid),
-            "IfScriptBeforeTask",
-            "ScriptBeforeTask",
-            "队列运行前脚本",
-        )
+        await self._run_queue_extra_script(str(queue_uid), "before")
         await self._run_due_entries(queue_uid, pending)
-        await self._run_queue_extra_script(
-            str(queue_uid),
-            "IfScriptAfterTask",
-            "ScriptAfterTask",
-            "队列运行后脚本",
-        )
+        await self._run_queue_extra_script(str(queue_uid), "after")
 
     async def _sleep_until(self, target: datetime) -> None:
         """睡到目标时刻，单次不超过上限。
@@ -736,12 +733,7 @@ class Task(TaskExecuteBase):
         await self.prepare()
 
         # 队列级运行前脚本：本次运行只跑一次，与账号数量无关。
-        await self._run_queue_extra_script(
-            self.task_info.queue_id,
-            "IfScriptBeforeTask",
-            "ScriptBeforeTask",
-            "队列运行前脚本",
-        )
+        await self._run_queue_extra_script(self.task_info.queue_id, "before")
 
         logger.info(
             f"开始运行任务: {self.task_info.task_id}, 模式: {self.task_info.mode}"
@@ -772,19 +764,25 @@ class Task(TaskExecuteBase):
         await self._run_script_list(start_index)
 
     async def _run_queue_extra_script(
-        self, queue_id: str | None, if_key: str, path_key: str, label: str
+        self, queue_id: str | None, phase: Literal["before", "after"]
     ) -> bool:
         """执行队列级额外脚本，返回是否真的发起了执行。
 
-        开关关闭、路径为空、非队列任务时直接跳过；脚本超时上限由
+        开关关闭、路径为空、非队列任务、队列已不存在时直接跳过；脚本超时上限由
         execute_script_task 统一控制（600 秒），失败只记日志不打断任务。
         """
 
         if queue_id is None:
             return False
 
-        queue_config = Config.QueueConfig.get(uuid.UUID(str(queue_id)))
-        if queue_config is None or not queue_config.get("Info", if_key):
+        if_key, path_key, label = QUEUE_EXTRA_SCRIPTS[phase]
+        queue_uid = uuid.UUID(queue_id)
+        if queue_uid not in Config.QueueConfig:
+            logger.warning(f"队列 {queue_uid} 不存在，跳过{label}")
+            return False
+
+        queue_config = Config.QueueConfig[queue_uid]
+        if not queue_config.get("Info", if_key):
             return False
 
         script_path = str(queue_config.get("Info", path_key) or "").strip()
@@ -915,12 +913,7 @@ class Task(TaskExecuteBase):
         # 队列级运行后脚本：先于「完成后操作」，保证脚本跑完再关机。
         # 用户主动停止（含循环任务）时不执行，与「完成后操作」同一口径。
         if not self.is_closing and not self.task_info.is_cycle:
-            await self._run_queue_extra_script(
-                self.task_info.queue_id,
-                "IfScriptAfterTask",
-                "ScriptAfterTask",
-                "队列运行后脚本",
-            )
+            await self._run_queue_extra_script(self.task_info.queue_id, "after")
 
         # 循环任务只会被用户主动停止，此时不该再执行队列的「完成后操作」——
         # 那会把关机之类的动作接在一次手动停止后面。
