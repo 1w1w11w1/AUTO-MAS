@@ -246,6 +246,7 @@ import ExtraScriptSection from '@/components/ExtraScriptSection.vue'
 import GuiSessionMask from '@/components/GuiSessionMask.vue'
 import ConfigRestoreSection from '@/views/EditView/User/components/ConfigRestoreSection.vue'
 import { buildRestoreConfirm } from '@/utils/configRestoreMode'
+import { showMaaConfigOverwriteTip } from '@/utils/maaConfigOverwriteTip'
 
 const { t } = useI18n()
 
@@ -1312,13 +1313,9 @@ const handleMAAConfig = async () => {
   if (configLocked.value) return
   if (!userId) return
   await startSession(userId)
-  // 会话真的起来了才提示：会用 MAS 存档覆盖 MAA 原生配置，会话前的配置已归档、可在「配置恢复」找回
+  // 会话真的起来了才提示：会用 MAS 存档覆盖 MAA 原生配置
   if (showMaaConfigMask.value) {
-    Modal.info({
-      title: t('scripts.toast.maaConfigOverwriteTitle'),
-      content: t('scripts.toast.maaConfigOverwriteContent'),
-      okText: t('common.confirm'),
-    })
+    showMaaConfigOverwriteTip()
   }
 }
 

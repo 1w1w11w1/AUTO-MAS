@@ -3472,7 +3472,7 @@ export default {
       configStarted: '{name} の{label}設定を開始しました',
       maaConfigOverwriteTitle: 'MAS のセーブデータで MAA の現在の設定を上書きします',
       maaConfigOverwriteContent:
-        'セッション開始時に、MAA の設定はこのアカウントの MAS セーブデータで上書きされます。セッション前の設定は自動でアーカイブ済みで、アカウント編集ページの「配置恢复」（設定の復元）から取り戻せます。',
+        'セッション開始時に、MAA の設定はこのアカウントの MAS セーブデータで上書きされます。セッション前の設定は自動でアーカイブ済みで、アカウント編集ページの「設定の復元」から取り戻せます。',
       sessionTimeout: '{name} の設定セッションがタイムアウトしました',
       startConfigFailed: '{label}の設定を開始できませんでした',
       startConfigError: '{label}の設定を開始できませんでした: {error}',

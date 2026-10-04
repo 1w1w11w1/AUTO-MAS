@@ -131,7 +131,7 @@
 import { useI18n } from 'vue-i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Modal, message } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import {
   DownOutlined,
   PlusOutlined,
@@ -169,6 +169,7 @@ import type { MaaFWEmbeddedSourceItem } from '@/api'
 import { Service } from '@/api/services/Service'
 import { TaskCreateIn } from '@/api/models/TaskCreateIn'
 import DocLink from '@/components/DocLink.vue'
+import { showMaaConfigOverwriteTip } from '@/utils/maaConfigOverwriteTip'
 import { MAS_DOC_URLS } from '@/utils/openExternal'
 import { filterScriptsByKeyword } from '@/views/scripts/scriptSearch'
 
@@ -716,14 +717,9 @@ const handleStartScriptConfig = async (script: Script, kind: 'MAA' | 'SRC' | 'Wh
     if (!started) return
 
     message.success(t('scripts.toast.configStarted', { name: script.name, label: kind }))
-    // 会话真的起来了才提示：配置 MAA 会用本账号的 MAS 存档盖掉 MAA 原生配置，
-    // 会话前的配置已自动归档。不做二次确认——托管与计划任务同样覆盖配置但没有按钮，弹窗挡不住那条路径。
+    // 会话真的起来了才提示：配置 MAA 会用 MAS 存档盖掉原生配置
     if (kind === 'MAA') {
-      Modal.info({
-        title: t('scripts.toast.maaConfigOverwriteTitle'),
-        content: t('scripts.toast.maaConfigOverwriteContent'),
-        okText: t('common.confirm'),
-      })
+      showMaaConfigOverwriteTip()
     }
     scheduleConfigSessionTimeout(script.id, clearConfigMask, () =>
       message.info(t('scripts.toast.sessionTimeout', { name: script.name }))
