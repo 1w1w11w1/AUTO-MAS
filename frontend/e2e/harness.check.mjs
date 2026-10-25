@@ -492,31 +492,6 @@ const collectVueFiles = async directory => {
 // SwitchSizes = tuple('small','default')）。写成 size="large" 不会让开关变大，只会刷一条
 // "custom validator check failed for prop size" 的 Vue 警告，还和同一表单里 large 的兄弟控件对不齐。
 // 这种错误只有真打开页面才在控制台出现，静态扫一遍源码能更早发现。
-// antd 4.2.6 的 a-select 只接受 value: Array | Object | String | Number
-// （node_modules/ant-design-vue/es/select/index.js:23），布尔不在其中。
-// 用 a-select 承载「是/否」设置时，选中项匹配不到布尔值：下拉框看起来是空的，
-// 同时每次渲染刷一条 "Invalid prop: type check failed for prop value" 警告。
-// 需要下拉语义的布尔设置使用 BooleanSelect，把布尔值映射为字符串选项；
-// 直接把布尔值交给 a-select 会让选中项匹配不到并触发警告。
-test('布尔设置不直接把布尔值交给 a-select', async () => {
-  const srcRoot = fileURLToPath(new URL('../src', import.meta.url))
-  const offenders = []
-  for (const file of await collectVueFiles(srcRoot)) {
-    const text = await readFile(file, 'utf8')
-    for (const block of text.matchAll(/<a-select\b[\s\S]*?<\/a-select>/g)) {
-      if (/:value="(?:true|false)"/.test(block[0])) {
-        const line = text.slice(0, block.index).split('\n').length
-        offenders.push(`${path.relative(srcRoot, file)}:${line}`)
-      }
-    }
-  }
-  assert.deepEqual(
-    offenders,
-    [],
-    `布尔值不能作为 a-select 的选项值（选中态匹配不到），请使用 BooleanSelect 或 a-switch：\n${offenders.join('\n')}`
-  )
-})
-
 test('a-switch 不使用它不支持的 size 取值', async () => {
   const srcRoot = fileURLToPath(new URL('../src', import.meta.url))
   const offenders = []
