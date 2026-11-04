@@ -25,7 +25,7 @@
 
 - **集中管理**：一站式管理多个脚本与多个用户配置，和凌乱的散装脚本窗口说再见！
 - **无人值守**：监看脚本日志并自动处理报错，再也不用为代理任务卡死时自己不在电脑旁烦恼啦！
-- **配置灵活**：通过调度队列与脚本的组合设计调度队列，自由实现您能想到的所有调度需求！
+- **配置灵活**：通过调度队列与脚本的组合设计调度流程，自由实现您能想到的所有调度需求！
 - **代理记录**：记录所有代理记录与日志片段，定位问题更快更准更方便！
 
 This software is a management tool for automation scripts. It enables centralized management of numerous scripts, stores multiple user configurations, designs automated task workflows, monitors script logs, and enhances the efficiency and stability of automated proxy operations.
